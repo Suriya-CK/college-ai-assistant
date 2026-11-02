@@ -1,0 +1,11 @@
+# Secrets: API keys are passed at run time with --env-file, never baked into the image
+.env
+.venv/
+data/
+__pycache__/
+*.pyc
+.git/
+.idea/
+.claude/
+.DS_Store
+tests/

@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>College AI Voice Assistant</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#14b8a6',
+                            600: '#0d9488',
+                            700: '#0f766e',
+                            800: '#115e59',
+                            900: '#134e4a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/app.css?v=6">
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen h-[100dvh] overflow-hidden flex flex-col font-sans antialiased selection:bg-teal-500 selection:text-white">
+
+    <!-- Top Navigation Bar -->
+    <header class="flex-shrink-0 bg-slate-800/80 backdrop-blur-md border-b border-slate-700/80 z-30 px-3 sm:px-4 py-2.5">
+        <div class="max-w-7xl mx-auto flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+                <!-- Colleges menu (phones only) -->
+                <button id="openSidebarBtn" class="md:hidden p-2 -ml-1 text-slate-300 hover:text-white rounded-lg hover:bg-slate-700/60 transition" title="Colleges">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <div class="w-9 h-9 sm:w-10 sm:h-10 flex-shrink-0 rounded-xl bg-gradient-to-tr from-teal-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-teal-500/20">
+                    <i data-lucide="graduation-cap" class="w-5 h-5 sm:w-6 sm:h-6 text-white"></i>
+                </div>
+                <div class="min-w-0 hidden sm:block">
+                    <h1 class="font-bold text-lg leading-tight tracking-tight truncate">College AI Assistant</h1>
+                    <p class="text-xs text-slate-400 truncate">Ask about any college, by text or voice</p>
+                </div>
+            </div>
+
+            <!-- Action Controls -->
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <button id="aiStatusBtn" class="hidden lg:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white transition whitespace-nowrap" title="AI model status">
+                    <span id="aiStatusDot" class="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span id="aiStatusText">AI Key Setup</span>
+                </button>
+
+                <!-- Regional Language Selector -->
+                <div class="relative">
+                    <select id="languageSelect" class="w-[7.5rem] sm:w-auto bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg pl-3 py-2 pr-8 focus:ring-2 focus:ring-teal-500 focus:outline-none appearance-none cursor-pointer font-medium truncate" title="Choose Regional Language">
+                        <option value="auto" selected>✨ Auto-detect</option>
+                        <option value="en">🌐 English</option>
+                        <option value="ta">🇮🇳 தமிழ் (Tamil)</option>
+                        <option value="hi">🇮🇳 हिन्दी (Hindi)</option>
+                        <option value="te">🇮🇳 తెలుగు (Telugu)</option>
+                        <option value="kn">🇮🇳 ಕನ್ನಡ (Kannada)</option>
+                        <option value="ml">🇮🇳 മലയാളം (Malayalam)</option>
+                        <option value="bn">🇮🇳 বাংলা (Bengali)</option>
+                        <option value="mr">🇮🇳 मराठी (Marathi)</option>
+                        <option value="gu">🇮🇳 ગુજરાતી (Gujarati)</option>
+                    </select>
+                    <i data-lucide="languages" class="w-4 h-4 text-teal-400 absolute right-2.5 top-3 pointer-events-none"></i>
+                </div>
+
+                <button id="openScrapeModalBtn" class="flex items-center gap-1.5 whitespace-nowrap bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white text-sm font-medium px-2.5 sm:px-3.5 py-2 rounded-lg shadow-md shadow-teal-500/20 transition-all" title="Add a college website">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span class="hidden sm:inline">Add College</span>
+                </button>
+
+                <button id="openSettingsBtn" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition" title="Settings">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace Layout -->
+    <div class="max-w-7xl mx-auto w-full flex-1 min-h-0 flex overflow-hidden p-2 sm:p-4 gap-4">
+
+        <!-- Backdrop behind the colleges drawer (phones only) -->
+        <div id="sidebarBackdrop" class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-40 hidden md:hidden"></div>
+
+        <!-- Left Sidebar: College Info & Indexed Knowledge Explorer -->
+        <aside id="sidebar" class="w-80 flex-shrink-0 bg-slate-800/95 md:bg-slate-800/60 backdrop-blur-sm border border-slate-700/60 rounded-2xl flex flex-col overflow-hidden">
+            <div class="p-4 border-b border-slate-700/60 flex items-center justify-between">
+                <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Your Colleges</span>
+                <div class="flex items-center gap-2">
+                    <span id="collegeCountBadge" class="text-xs bg-slate-700/80 px-2 py-0.5 rounded-full text-slate-300 font-mono">{{ colleges|length }}</span>
+                    <button id="closeSidebarBtn" class="md:hidden p-1 text-slate-400 hover:text-white" title="Close">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div id="collegesList" class="flex-1 overflow-y-auto p-3 space-y-2">
+                {% if colleges %}
+                    {% for col in colleges %}
+                    <div data-college-id="{{ col.id }}" class="college-card cursor-pointer p-3 rounded-xl border border-slate-700/50 hover:border-teal-500/50 bg-slate-800/80 hover:bg-slate-750 transition-all flex flex-col gap-1.5 group">
+                        <div class="flex items-start justify-between">
+                            <h3 class="font-medium text-sm text-slate-200 group-hover:text-teal-300 truncate max-w-[180px]">{{ col.name or col.domain }}</h3>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-mono">{{ col.page_count }} pgs</span>
+                        </div>
+                        <p class="text-xs text-slate-400 truncate">{{ col.url }}</p>
+                        <div class="flex items-center justify-between text-[11px] text-slate-500 mt-1">
+                            <span>{{ col.chunk_count }} chunks</span>
+                            <button onclick="deleteCollege({{ col.id }}, event)" class="md:opacity-0 md:group-hover:opacity-100 hover:text-red-400 transition" title="Delete College">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div id="emptyCollegesMsg" class="text-center py-12 px-4">
+                        <div class="w-12 h-12 mx-auto rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 mb-3">
+                            <i data-lucide="globe" class="w-6 h-6"></i>
+                        </div>
+                        <p class="text-sm font-medium text-slate-300">No colleges indexed yet</p>
+                        <p class="text-xs text-slate-500 mt-1">Click "Add College" to crawl and store college data.</p>
+                    </div>
+                {% endif %}
+            </div>
+
+            <!-- College Knowledge Details Footer -->
+            <div id="collegeDetailBox" class="p-3 bg-slate-850 border-t border-slate-700/60 hidden">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-teal-400 flex items-center gap-1">
+                        <i data-lucide="book-open" class="w-3.5 h-3.5"></i> Indexed Pages
+                    </span>
+                    <button id="viewPagesBtn" class="text-xs text-slate-400 hover:text-white underline">Explore</button>
+                </div>
+                <div id="pagesPreviewList" class="max-h-28 overflow-y-auto space-y-1 text-xs text-slate-400">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right/Center: Conversational Chat & Voice Interaction Area -->
+        <main class="flex-1 min-w-0 min-h-0 bg-slate-800/60 backdrop-blur-sm border border-slate-700/60 rounded-2xl flex flex-col overflow-hidden shadow-2xl relative">
+            
+            <!-- Active College Header Bar -->
+            <div id="chatHeader" class="flex-shrink-0 px-3 sm:px-5 py-3 border-b border-slate-700/60 flex items-center justify-between gap-2 bg-slate-800/40">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div class="w-3 h-3 flex-shrink-0 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50 animate-pulse"></div>
+                    <div class="min-w-0">
+                        <h2 id="currentCollegeTitle" class="text-sm font-semibold text-slate-200 truncate">Choose or add a college to begin</h2>
+                        <p id="currentCollegeSubtitle" class="text-xs text-slate-400 truncate">Ask any question by voice or text.</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+                    <!-- Voice Mode Toggle Button -->
+                    <button id="voiceAutoSpeakToggle" class="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 hover:bg-slate-700 transition whitespace-nowrap" title="Toggle Auto Voice Readout">
+                        <i data-lucide="volume-2" id="voiceToggleIcon" class="w-4 h-4 text-teal-400"></i>
+                        <span id="voiceToggleText" class="hidden sm:inline">Voice Output: ON</span>
+                    </button>
+                    <!-- Clear Chat -->
+                    <button id="clearChatBtn" class="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-slate-700/50 transition" title="Clear Chat">
+                        <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- AI Key Missing Notice Banner -->
+            <div id="aiKeyNoticeBanner" class="hidden flex-shrink-0 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-300 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="info" class="w-4 h-4 text-amber-400 flex-shrink-0"></i>
+                    <span><strong>Free Gemini AI Key Recommended:</strong> Without an API key, the assistant runs in Extractive Search mode. Add your free Gemini API Key in Settings for natural conversational synthesis!</span>
+                </div>
+                <button onclick="document.getElementById('openSettingsBtn').click()" class="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-medium transition text-[11px] whitespace-nowrap ml-2">Add Key</button>
+            </div>
+
+            <!-- Messages Stream Area -->
+            <div id="chatMessages" class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-5 space-y-4">
+                <!-- Welcome Card -->
+                <div id="welcomeMessage" class="max-w-2xl mx-auto py-6 sm:py-8 text-center flex flex-col items-center">
+                    <div class="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 mb-4 shadow-xl">
+                        <i data-lucide="sparkles" class="w-7 h-7 sm:w-8 sm:h-8"></i>
+                    </div>
+                    <h3 class="text-lg sm:text-xl font-bold text-slate-100">Welcome to College AI Assistant</h3>
+                    <p class="text-sm text-slate-400 mt-2 max-w-md">
+                        Add a college's website and the assistant reads it for you. Then ask about courses, placements, fees, admissions and more, by typing or speaking.
+                    </p>
+                    <div class="mt-5 flex flex-wrap justify-center gap-2">
+                        <button onclick="document.getElementById('openSidebarBtn').click()" class="md:hidden px-4 py-2 rounded-lg text-sm border border-slate-600 text-slate-200 hover:border-teal-500/60 transition">Choose a college</button>
+                        <button onclick="document.getElementById('openScrapeModalBtn').click()" class="px-4 py-2 rounded-lg text-sm font-medium bg-teal-500 hover:bg-teal-600 text-white transition">Add a college</button>
+                    </div>
+
+                    <!-- Quick Prompt Suggestions -->
+                    <div class="mt-6 w-full max-w-lg">
+                        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">Questions you can ask</span>
+                        <div class="suggestion-grid grid grid-cols-1 sm:grid-cols-2 gap-2 text-left"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Voice Activity Visualizer (shown when speaking / recording) -->
+            <div id="voiceVisualizer" class="hidden flex-shrink-0 px-5 py-2 bg-teal-950/40 border-t border-teal-800/50 flex items-center justify-between text-xs text-teal-300">
+                <div class="flex items-center space-x-2">
+                    <span id="voiceStatusBadge" class="w-2.5 h-2.5 rounded-full bg-teal-400 animate-ping"></span>
+                    <span id="voiceStatusText">Listening to your voice... Speak now!</span>
+                </div>
+                <div class="voice-wave flex items-center gap-1">
+                    <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
+                </div>
+            </div>
+
+            <!-- Bottom Input & Voice Control Bar -->
+            <div class="flex-shrink-0 p-2.5 sm:p-4 border-t border-slate-700/60 bg-slate-800/50">
+                <form id="chatForm" class="flex items-center gap-2 relative">
+                    <!-- Voice Mic Button -->
+                    <button type="button" id="micBtn" class="w-11 h-11 flex-shrink-0 rounded-xl bg-slate-700 hover:bg-teal-600 text-slate-300 hover:text-white flex items-center justify-center transition-all shadow-md group relative" title="Click to Speak (Voice Input)">
+                        <i data-lucide="mic" id="micIcon" class="w-5 h-5"></i>
+                        <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-900 text-[10px] text-white px-2 py-0.5 rounded shadow whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Push to Talk</span>
+                    </button>
+
+                    <!-- Text Input Box -->
+                    <div class="flex-1 min-w-0 relative">
+                        <input type="text" id="userInput" placeholder="Ask anything about the college (or click mic to speak)..." class="w-full bg-slate-900/90 border border-slate-700 text-slate-100 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent pr-10 placeholder-slate-500" autocomplete="off" />
+                        <span id="speechInterimIndicator" class="absolute right-3 top-2.5 text-xs text-teal-400 italic hidden animate-pulse">listening...</span>
+                    </div>
+
+                    <!-- Send Button -->
+                    <button type="submit" id="sendBtn" class="w-11 h-11 flex-shrink-0 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-white flex items-center justify-center shadow-md shadow-teal-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i data-lucide="send" class="w-5 h-5"></i>
+                    </button>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scrape New College Modal -->
+    <div id="scrapeModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl relative max-h-full overflow-y-auto">
+            <button id="closeScrapeModal" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+
+            <div class="flex items-center space-x-3 mb-4">
+                <div class="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center">
+                    <i data-lucide="globe" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-slate-100">Index College Website</h3>
+                    <p class="text-xs text-slate-400">Collects all data and stores it in the knowledge database.</p>
+                </div>
+            </div>
+
+            <form id="scrapeForm" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">College Website URL</label>
+                    <input type="url" id="scrapeUrlInput" required placeholder="e.g. https://www.annauniv.edu" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-300 mb-1">Max Pages to Crawl</label>
+                        <input type="number" id="scrapeMaxPages" value="120" min="5" max="400" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-300 mb-1">Max Crawl Depth</label>
+                        <input type="number" id="scrapeMaxDepth" value="4" min="1" max="6" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                    </div>
+                </div>
+
+                <!-- Live Crawl Progress Box -->
+                <div id="crawlProgressBox" class="bg-slate-900/90 border border-slate-700 rounded-xl p-3 hidden space-y-2">
+                    <div class="flex items-center justify-between text-xs">
+                        <span id="crawlStatusLabel" class="text-teal-400 font-medium">Discovering pages...</span>
+                        <span id="crawlCountBadge" class="text-slate-400 font-mono">0 / 30</span>
+                    </div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                        <div id="crawlProgressBar" class="bg-gradient-to-r from-teal-500 to-emerald-400 h-2 rounded-full transition-all duration-300 w-0"></div>
+                    </div>
+                    <p id="crawlCurrentUrl" class="text-[11px] text-slate-400 truncate font-mono"></p>
+                </div>
+
+                <div class="flex items-center justify-end gap-2 pt-2">
+                    <button type="button" id="cancelScrapeBtn" class="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-700 transition">Cancel</button>
+                    <button type="submit" id="startScrapeBtn" class="px-5 py-2 rounded-lg text-sm font-medium bg-teal-500 hover:bg-teal-600 text-white shadow-md shadow-teal-500/20 transition flex items-center gap-1.5">
+                        <i data-lucide="play" class="w-4 h-4"></i>
+                        <span>Start Crawling & Indexing</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl relative max-h-full overflow-y-auto">
+            <button id="closeSettingsModal" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+
+            <div class="flex items-center space-x-3 mb-4">
+                <div class="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                    <i data-lucide="sliders" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-slate-100">Settings & API Keys</h3>
+                    <p class="text-xs text-slate-400">Configure LLM providers and voice voices.</p>
+                </div>
+            </div>
+
+            <form id="settingsForm" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Google Gemini API Key</label>
+                    <input type="password" id="geminiKeyInput" placeholder="Enter Gemini API key..." class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono" />
+                    <p class="text-[11px] text-slate-500 mt-0.5">Used for Gemini 3.8 Flash / 1.5 Flash conversational answers & embeddings.</p>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">OpenAI API Key (Optional)</label>
+                    <input type="password" id="openaiKeyInput" placeholder="sk-..." class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono" />
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Groq API Key</label>
+                    <input type="password" id="groqKeyInput" placeholder="gsk_..." class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono" />
+                    <p class="text-[11px] text-slate-500 mt-0.5">Used for Groq hosted chat models. Get a key at console.groq.com.</p>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">OpenRouter API Key</label>
+                    <input type="password" id="openrouterKeyInput" placeholder="sk-or-..." autocomplete="off" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono" />
+                    <label class="block text-[11px] font-medium text-slate-400 mt-2 mb-1">OpenRouter model</label>
+                    <input type="text" id="openrouterModelInput" list="openrouterModels" placeholder="nvidia/nemotron-3-ultra-550b-a55b:free" autocomplete="off" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono" />
+                    <datalist id="openrouterModels">
+                        <option value="nvidia/nemotron-3-ultra-550b-a55b:free"></option>
+                        <option value="nvidia/nemotron-3.5-super-vl:free"></option>
+                        <option value="google/gemma-4-31b-it:free"></option>
+                        <option value="google/gemma-4-26b-a4b-it:free"></option>
+                    </datalist>
+                    <p class="text-[11px] text-slate-500 mt-0.5">Models ending in ":free" cost nothing (they have a daily request limit). If this model is busy, other free models are tried automatically. Get a key at openrouter.ai.</p>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Chat Model Provider</label>
+                    <select id="providerSelect" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                        <option value="gemini">Google Gemini</option>
+                        <option value="groq">Groq</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter (free models)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Voice Character (Neural Voice)</label>
+                    <select id="voiceSelect" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                        <optgroup label="🇮🇳 Tamil (தமிழ்)">
+                            <option value="ta-IN-PallaviNeural">பல்லவி - Pallavi (பெண் / Female)</option>
+                            <option value="ta-IN-ValluvarNeural">வள்ளுவர் - Valluvar (ஆண் / Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Hindi (हिन्दी)">
+                            <option value="hi-IN-SwaraNeural">स्वरा - Swara (महिला / Female)</option>
+                            <option value="hi-IN-MadhurNeural">मधुर - Madhur (पुरुष / Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Indian English">
+                            <option value="en-IN-NeerjaNeural" selected>Neerja (Natural Indian Accent - Female)</option>
+                            <option value="en-IN-PrabhatNeural">Prabhat (Clear Indian Accent - Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Telugu (తెలుగు)">
+                            <option value="te-IN-ShrutiNeural">శృతి - Shruti (మహిళ / Female)</option>
+                            <option value="te-IN-MohanNeural">మోహన్ - Mohan (పురుషుడు / Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Kannada (ಕನ್ನಡ)">
+                            <option value="kn-IN-SapnaNeural">ಸಪ್ನಾ - Sapna (ಮಹಿಳೆ / Female)</option>
+                            <option value="kn-IN-GaganNeural">ಗಗನ್ - Gagan (ಪುರುಷ / Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Malayalam (മലയാളം)">
+                            <option value="ml-IN-SobhanaNeural">ശോഭന - Sobhana (സ്ത്രീ / Female)</option>
+                            <option value="ml-IN-MidhunNeural">മിഥുൻ - Midhun (പുരുഷൻ / Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Bengali (বাংলা)">
+                            <option value="bn-IN-TanishaaNeural">তানিশা - Tanishaa (মহিলা / Female)</option>
+                            <option value="bn-IN-BashkarNeural">ভাস্কর - Bashkar (পুরুষ / Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Marathi (मराठी)">
+                            <option value="mr-IN-AarohiNeural">आरोही - Aarohi (महिला / Female)</option>
+                            <option value="mr-IN-ManoharNeural">मनोहर - Manohar (पुरुष / Male)</option>
+                        </optgroup>
+                        <optgroup label="🇮🇳 Gujarati (ગુજરાતી)">
+                            <option value="gu-IN-DhwaniNeural">ધ્વનિ - Dhwani (મહિલા / Female)</option>
+                            <option value="gu-IN-NiranjanNeural">નિરંજન - Niranjan (પુરુષ / Male)</option>
+                        </optgroup>
+                        <optgroup label="🌐 US & UK English">
+                            <option value="en-US-JennyNeural">Jenny (Warm & Natural - US Female)</option>
+                            <option value="en-US-GuyNeural">Guy (Confident - US Male)</option>
+                            <option value="en-GB-SoniaNeural">Sonia (British Accent - Female)</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <!-- Result of saving: whether the key was saved and actually works -->
+                <div id="settingsStatus" class="hidden text-xs rounded-lg px-3 py-2 border"></div>
+
+                <div class="flex items-center justify-end gap-2 pt-2">
+                    <button type="submit" id="saveSettingsBtn" class="px-5 py-2 rounded-lg text-sm font-medium bg-teal-500 hover:bg-teal-600 text-white shadow-md shadow-teal-500/20 transition disabled:opacity-60 disabled:cursor-wait">Save Settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/voice.js?v=6"></script>
+    <script src="/static/js/app.js?v=6"></script>
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>
