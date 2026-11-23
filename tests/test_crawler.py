@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Suriya C K (github.com/Suriya-CK). All rights reserved.
+# Part of College AI Voice Assistant. Unauthorized copying or reuse is prohibited. See LICENSE.
 import unittest
 from collections import Counter
 from app.crawler import CollegeCrawler

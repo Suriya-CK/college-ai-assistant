@@ -1,5 +1,9 @@
 # 🎓 College AI Voice Assistant
 
+**Author & owner: [Suriya C K](https://github.com/Suriya-CK)** · © 2026 · All rights reserved · [License](LICENSE)
+
+> ⚠️ This is the original work of Suriya C K. You may view it, but copying, reusing, or presenting any part of it as your own work is not allowed without written permission. See [LICENSE](LICENSE).
+
 Give it a college website URL. It crawls the site, builds a searchable knowledge base, and answers students' questions (courses, placements, recruiters, fees, admissions) by text or voice in English and 8 Indian languages, with links to the official source pages.
 
 Built with **Python, FastAPI, Crawl4AI, SQLite (FTS5), LLMs (Groq / Gemini / OpenAI / OpenRouter), Whisper and edge-tts**. Also exposes its data to AI agents as an **MCP server**, and runs in **Docker**.
@@ -141,5 +145,13 @@ python -m unittest discover tests
 ## ⚖️ Responsible crawling
 The crawler reads public pages slowly and stops when a site blocks it. It never tries to get around bot protection. For such sites, use manual import or ask the institution for access.
 
+## 👤 Author
+
+**Suriya C K**: designed and built this project from scratch (architecture, crawler, RAG pipeline, multilingual voice, MCP server, web UI and tests).
+GitHub: [@Suriya-CK](https://github.com/Suriya-CK)
+
 ## License
-MIT
+
+**Copyright © 2026 Suriya C K. All rights reserved.**
+
+This is not open-source software. You may view the code and run it to evaluate it. You may not copy, modify, redistribute, reuse it in other projects or assignments, or claim it as your own without the author's written permission. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Suriya C K (github.com/Suriya-CK). All rights reserved.
+# Part of College AI Voice Assistant. Unauthorized copying or reuse is prohibited. See LICENSE.
 import os
 import uuid
 import asyncio
@@ -25,7 +27,13 @@ from app.multilingual import SUPPORTED_LANGUAGES
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("college_assistant")
 
-app = FastAPI(title="College AI Voice Assistant", version="1.0.0")
+app = FastAPI(
+    title="College AI Voice Assistant",
+    version="1.0.0",
+    description="Created and owned by Suriya C K. All rights reserved.",
+    contact={"name": "Suriya C K", "url": "https://github.com/Suriya-CK"},
+    license_info={"name": "Proprietary. All rights reserved", "url": "https://github.com/Suriya-CK/college-ai-assistant/blob/main/LICENSE"},
+)
 
 # Enable CORS
 app.add_middleware(

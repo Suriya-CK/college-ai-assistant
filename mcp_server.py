@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Suriya C K (github.com/Suriya-CK). All rights reserved.
+# Part of College AI Voice Assistant. Unauthorized copying or reuse is prohibited. See LICENSE.
 """MCP server: lets AI agents (Claude Desktop, Cursor, agent frameworks) use the college knowledge base as tools.
 
 MCP (Model Context Protocol) is a standard way to offer tools to an AI. The agent reads each tool's name,

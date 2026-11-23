@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you refer to this project, please cite it as below. Copying or reusing the code requires the author's written permission (see LICENSE)."
+title: "College AI Voice Assistant"
+abstract: "Crawls a college website, builds a searchable knowledge base, and answers questions by text or voice in English and 8 Indian languages."
+type: software
+authors:
+  - given-names: "Suriya"
+    family-names: "C K"
+    alias: "Suriya-CK"
+repository-code: "https://github.com/Suriya-CK/college-ai-assistant"
+license-url: "https://github.com/Suriya-CK/college-ai-assistant/blob/main/LICENSE"
+version: "1.0.0"
+date-released: "2026-11-02"

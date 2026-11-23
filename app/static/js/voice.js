@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Suriya C K (github.com/Suriya-CK). All rights reserved.
+ * Part of College AI Voice Assistant. Unauthorized copying or reuse is prohibited. See LICENSE. */
 /**
  * VoiceController
  * Handles Speech-to-Text (Microphone input) and Text-to-Speech (Audio output)

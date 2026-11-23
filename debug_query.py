@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Suriya C K (github.com/Suriya-CK). All rights reserved.
+# Part of College AI Voice Assistant. Unauthorized copying or reuse is prohibited. See LICENSE.
 """Show what retrieval returns for one question, and which chunks the relevance gate keeps.
 Usage: python debug_query.py <college_id> "your question"
 """
