@@ -6,7 +6,7 @@ import hashlib
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, AsyncIterator
 
 from app.config import Config
 from app.multilingual import SUPPORTED_LANGUAGES, get_all_voices, detect_language
@@ -23,6 +23,31 @@ _AUDIO_EXTENSIONS = {
     "webm": "webm", "ogg": "ogg", "mp4": "mp4", "x-m4a": "m4a", "m4a": "m4a", "aac": "m4a",
     "mpeg": "mp3", "mp3": "mp3", "wav": "wav", "x-wav": "wav", "flac": "flac",
 }
+
+
+# Written forms that text-to-speech reads badly ("L P A", "rupee symbol 58") -> how a person says them.
+# Mostly for English answers; the Indian-language voices read their own scripts fine.
+_SPOKEN_FORMS = [
+    (re.compile(r"₹\s*([\d.,]+)\s*(?:Cr|crores?)\b", re.I), r"\1 crore rupees"),
+    (re.compile(r"₹\s*([\d.,]+)\s*(?:L|lakhs?|LPA)\b", re.I), r"\1 lakh rupees"),
+    (re.compile(r"₹\s*([\d.,]+)"), r"\1 rupees"),
+    (re.compile(r"\bRs\.?\s*([\d.,]+)", re.I), r"\1 rupees"),
+    (re.compile(r"\bLPA\b"), "lakh per annum"),
+    (re.compile(r"\bCTC\b"), "C T C"),
+    (re.compile(r"(\d)\s*Cr\b"), r"\1 crore"),
+    (re.compile(r"\bB\.\s?E\.?(?=\s|$)"), "B E"),
+    (re.compile(r"\bB\.\s?Tech\.?", re.I), "B Tech"),
+    (re.compile(r"\bM\.\s?E\.?(?=\s|$)"), "M E"),
+    (re.compile(r"\bM\.\s?Tech\.?", re.I), "M Tech"),
+    (re.compile(r"\bPh\.?\s?D\.?", re.I), "P H D"),
+    (re.compile(r"\be\.g\.", re.I), "for example"),
+    (re.compile(r"\bi\.e\.", re.I), "that is"),
+    (re.compile(r"\bvs\.?(?=\s)", re.I), "versus"),
+    (re.compile(r"\s&\s"), " and "),
+    # "5-10 lakh" -> "5 to 10 lakh" (only ranges with a unit, so dates like 23-11-2026 stay as they are)
+    (re.compile(r"(\d)\s*[–-]\s*(\d+(?:\.\d+)?)\s*(lakh|crore|%|percent|years?|months?)", re.I), r"\1 to \2 \3"),
+    (re.compile(r"(\d)\s*%"), r"\1 percent"),
+]
 
 
 def resolve_spoken_language(whisper_language: Optional[str], text: str) -> str:
@@ -55,7 +80,10 @@ class VoiceService:
         text = re.sub(r"[#*_~`>]", "", text)
         # 5. Remove markdown bullet points
         text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
-        # 6. Normalize whitespace
+        # 6. Say abbreviations and amounts the way a person would ("58 LPA" -> "58 lakh per annum")
+        for pattern, spoken in _SPOKEN_FORMS:
+            text = pattern.sub(spoken, text)
+        # 7. Normalize whitespace
         text = re.sub(r"\s+", " ", text).strip()
         if len(text) > 1500:
             text = text[:1500] + "..."
@@ -105,6 +133,48 @@ class VoiceService:
         except Exception as e:
             logger.warning(f"gTTS synthesis error ({lang}): {e}")
             return None
+
+    def cache_name(self, text: str, voice: str) -> str:
+        """Cache file name for an Edge TTS clip (same scheme as text_to_speech_edge)."""
+        spoken_text = self.clean_text_for_speech(text)
+        return hashlib.md5(f"{spoken_text}_{voice}".encode("utf-8")).hexdigest() + ".mp3"
+
+    async def stream_speech(self, text: str, voice: str = "en-IN-NeerjaNeural", lang: str = "en") -> AsyncIterator[bytes]:
+        """Yield MP3 audio while Edge TTS is still generating it, so playback starts in about a second
+        instead of after the whole clip (2-4 s). The finished clip is cached; if Edge fails before
+        sending any audio, the whole gTTS clip is sent instead."""
+        spoken_text = self.clean_text_for_speech(text)
+        if not spoken_text:
+            return
+        file_path = self.cache_dir / self.cache_name(text, voice)
+        if file_path.exists() and file_path.stat().st_size > 0:
+            yield file_path.read_bytes()
+            return
+
+        tmp_path = file_path.with_suffix(".part")
+        sent = False
+        try:
+            import edge_tts
+            with open(tmp_path, "wb") as out:
+                async for chunk in edge_tts.Communicate(spoken_text, voice).stream():
+                    if chunk.get("type") == "audio" and chunk.get("data"):
+                        out.write(chunk["data"])
+                        sent = True
+                        yield chunk["data"]
+            if sent:
+                tmp_path.replace(file_path)
+                return
+        except Exception as e:
+            logger.warning(f"Edge TTS streaming error ({voice}): {e}")
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+        if sent:
+            return   # cut off midway: what was sent has already played
+        loop = asyncio.get_event_loop()
+        url = await loop.run_in_executor(None, self.text_to_speech_gtts, text, lang)
+        if url:
+            yield (self.cache_dir / url.rsplit("/", 1)[-1]).read_bytes()
 
     async def generate_speech(self, text: str, voice: str = "en-IN-NeerjaNeural", lang: str = "en") -> Optional[str]:
         """Generate speech file and return public audio URL, with Edge TTS and gTTS fallback."""

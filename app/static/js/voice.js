@@ -236,8 +236,8 @@ class VoiceController {
     /**
      * Play spoken text via server neural audio URL or browser SpeechSynthesis
      */
-    async speak(text, audioUrl = null, locale = null) {
-        if (!this.autoSpeak) return;
+    async speak(text, audioUrl = null, locale = null, force = false) {
+        if (!this.autoSpeak && !force) return;   // force: the student pressed "Listen"
 
         this.stopSpeaking();
 
@@ -260,18 +260,42 @@ class VoiceController {
             utterance.pitch = 1.0;
             utterance.lang = locale || this.speechLocale || "en-IN";
 
-            // Try to find a matching voice in the browser for this language
-            const voices = window.speechSynthesis.getVoices();
-            if (voices && voices.length > 0) {
-                const targetPrefix = (locale || this.speechLocale).split("-")[0];
-                const match = voices.find(v => v.lang.startsWith(targetPrefix));
-                if (match) {
-                    utterance.voice = match;
-                }
-            }
+            const match = this.pickBrowserVoice(utterance.lang);
+            if (match) utterance.voice = match;
 
             window.speechSynthesis.speak(utterance);
         }
+    }
+
+    /**
+     * The browser's best voice for a locale, remembered so every answer uses the same one.
+     * Prefers the exact locale (en-IN), then natural/online voices; skips macOS novelty voices
+     * ("Bad News", "Bubbles", "Zarvox"...), which were what made English sound so poor.
+     */
+    pickBrowserVoice(locale) {
+        this._browserVoices = this._browserVoices || {};
+        if (this._browserVoices[locale]) return this._browserVoices[locale];
+        const voices = window.speechSynthesis.getVoices() || [];
+        if (!voices.length) return null;   // not loaded yet: the browser uses its default for utterance.lang
+
+        const NOVELTY = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley)\b/i;
+        const prefix = locale.split("-")[0].toLowerCase();
+        const norm = (l) => (l || "").replace("_", "-").toLowerCase();
+        const score = (v) => {
+            const lang = norm(v.lang);
+            let s = 0;
+            if (lang === locale.toLowerCase()) s += 100;          // en-IN for English answers
+            else if (lang.startsWith(prefix)) s += 40;
+            else return -1;
+            if (/natural|neural|online|premium|enhanced|google/i.test(v.name)) s += 30;
+            if (/microsoft/i.test(v.name)) s += 20;
+            if (v.localService === false) s += 5;                  // cloud voices usually sound better
+            if (NOVELTY.test(v.name)) s -= 200;
+            return s;
+        };
+        const best = voices.map((v) => [score(v), v]).filter(([s]) => s > 0).sort((a, b) => b[0] - a[0])[0];
+        if (best) this._browserVoices[locale] = best[1];
+        return best ? best[1] : null;
     }
 
     stopSpeaking() {
