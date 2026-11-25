@@ -161,6 +161,10 @@ class TestFacts(unittest.TestCase):
 
     def test_question_intent(self):
         self.assertEqual(fact_categories_for("tell me about the companies hiring here"), ["recruiter", "placement_stat"])
+        # A vague overview question gets the principal / contact and accreditation facts
+        self.assertEqual(fact_categories_for("Give me an overview of this college"), ["contact", "accreditation"])
+        self.assertEqual(fact_categories_for("Tell me about this college"), ["contact", "accreditation"])
+        self.assertIn("contact", fact_categories_for("What is the TNEA counselling code of this college?"))
         self.assertEqual(fact_categories_for("what are the UG courses offered here?"), ["ug_program"])
         self.assertEqual(fact_categories_for("list all courses"), ["ug_program", "pg_program", "doctoral_program"])
         self.assertEqual(fact_categories_for("when was the college founded?"), [])
@@ -175,6 +179,15 @@ class TestFacts(unittest.TestCase):
         for i in range(20):
             self.assertIn(f"B.E. Branch {i}", ans["content"])
         self.assertIn("https://example.edu/courses", [c["url"] for c in ans["citations"]])
+
+
+class TestProgrammeNameMerge(unittest.TestCase):
+    def test_and_in_programme_names_merges(self):
+        from app.rag_engine import merge_similar_facts
+        facts = [{"category": "pg_program", "name": "M.E. Computer Science Engineering", "details": "Intake 18", "source_url": "a"},
+                 {"category": "pg_program", "name": "M.E. Computer Science and Engineering", "details": "Full Time", "source_url": "b"},
+                 {"category": "pg_program", "name": "M.E. Applied Electronics", "details": "", "source_url": "a"}]
+        self.assertEqual(len(merge_similar_facts(facts)), 2)
 
 
 if __name__ == "__main__":

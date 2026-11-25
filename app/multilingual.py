@@ -179,6 +179,14 @@ SUPPORTED_LANGUAGES: Dict[str, Dict[str, Any]] = {
 REGIONAL_TOPIC_KEYWORDS = {
     # Tamil
     "ta": [
+        # Specific academic terms first (the free online translator is often unavailable, so these matter)
+        (["முதுநிலை", "முதுகலை", "எம்.இ", "எம்.டெக்", "எம்பிஏ"], "postgraduate pg masters M.E. programmes"),
+        (["இளநிலை", "இளங்கலை", "பி.இ", "பி.டெக்"], "undergraduate ug bachelor B.E. programmes"),
+        (["புதிதாக", "புதிய", "சமீபத்திய", "சமீபத்தில்", "அறிமுக"], "latest new course introduced started in the academic year programmes"),
+        (["முதல்வர்"], "principal"),
+        (["அங்கீகார"], "accreditation accredited NBA NAAC"),
+        (["நிறுவனங்கள்", "நிறுவனம்", "ஆட்சேர்ப்பு"], "companies recruiters placement"),
+        (["குறியீடு", "கவுன்சிலிங்", "கலந்தாய்வு"], "TNEA counselling code"),
         (["சேர்க்கை", "விண்ணப்ப", "நுழைவு", "தகுதி", "விண்ணப்பிக்க"], "admission apply eligibility requirements deadline"),
         (["படிப்பு", "பாடப்பிரிவு", "துறை", "பட்டம்", "பாடத்திட்டம்", "பாடங்கள்", "பாடநெறி"], "courses programs degrees curriculum academic department syllabus"),
         (["கட்டணம்", "கட்டணங்கள்", "செலவு", "உதவித்தொகை", "கல்விக்கட்டணம்"], "tuition fees cost charges scholarship financial aid"),
@@ -191,6 +199,13 @@ REGIONAL_TOPIC_KEYWORDS = {
     ],
     # Hindi
     "hi": [
+        (["स्नातकोत्तर", "पीजी", "एम.ई", "एमई", "मास्टर"], "postgraduate pg masters M.E. programmes"),
+        (["यूजी", "बी.ई", "बीई", "अंडरग्रेजुएट", "स्नातक पाठ्यक्रम", "स्नातक कोर्स"], "undergraduate ug bachelor B.E. programmes"),
+        (["नवीनतम", "नया", "नई", "हाल ही", "शुरू"], "latest new course introduced started in the academic year programmes"),
+        (["प्रिंसिपल", "प्राचार्य"], "principal"),
+        (["मान्यता", "एनबीए", "नैक"], "accreditation accredited NBA NAAC"),
+        (["कंपनियों", "कंपनी", "कंपनियाँ", "भर्ती"], "companies recruiters placement"),
+        (["कोड", "काउंसलिंग"], "TNEA counselling code"),
         (["प्रवेश", "दाखिला", "आवेदन", "पात्रता"], "admission apply eligibility requirements deadline"),
         (["पाठ्यक्रम", "कोर्स", "डिग्री", "विभाग", "पढ़ाई"], "courses programs degrees curriculum academic department syllabus"),
         (["फीस", "शुल्क", "खर्च", "छात्रवृत्ति"], "tuition fees cost charges scholarship financial aid"),

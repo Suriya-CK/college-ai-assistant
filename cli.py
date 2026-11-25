@@ -97,6 +97,48 @@ def cmd_extract(args):
     if extractor.stopped_reason:
         print(f"⚠️  {extractor.stopped_reason}")
 
+def cmd_import_placements(args):
+    from app.placement_report import import_placement_report
+    db = Database()
+    if not db.get_college(args.college_id):
+        print(f"❌ No college with ID {args.college_id}. See 'python3 cli.py list'.")
+        return
+    print(f"\n📥 Reading placement report: {args.source}")
+    try:
+        result = import_placement_report(db, args.college_id, args.source, replace_recruiters=not args.keep_existing)
+    except Exception as e:
+        print(f"❌ {e}")
+        return
+    if result["kind"] == "nirf":
+        print(f"Found NIRF placement data for {result['rows']} graduating batches"
+              + (f" (NIRF {result['year']})" if result["year"] else "") + ".")
+    else:
+        print(f"Found {result['rows']} offers from {result['companies']} companies"
+              + (f" ({result['year']})" if result["year"] else "") + ". Student names were not stored.")
+    print("Indexing for search...")
+    VectorSearchEngine(db).index_pending_chunks(args.college_id)
+    print(f"Done. Fact totals: {db.get_fact_counts(args.college_id)}")
+
+def cmd_rechunk(args):
+    """Re-split saved pages into search snippets with the current rules (no crawling, no AI tokens)."""
+    db = Database()
+    crawler = CollegeCrawler(db)
+    with db.get_connection() as conn:
+        ids = [args.college_id] if args.college_id else [r[0] for r in conn.execute("SELECT id FROM colleges")]
+    for cid in ids:
+        pages = db.get_pages_with_text(cid)
+        total = 0
+        for p in pages:
+            title = p.get("title") or ""
+            chunks = crawler.create_chunks(crawler.markdown_to_sections(p["clean_text"]), title)
+            if not chunks:
+                chunks = [{"heading": "Overview", "text": f"[{title}]\n{p['clean_text'][:3000]}"}]
+            db.delete_chunks_for_page(p["id"])
+            db.save_chunks_batch(cid, p["id"], p["url"], title, chunks)
+            total += len(chunks)
+        VectorSearchEngine(db).index_pending_chunks(cid)
+        print(f"College {cid}: {len(pages)} pages re-split into {total} snippets and re-indexed.")
+
 def cmd_list(args):
     db = Database()
     colleges = db.list_colleges()
@@ -214,6 +256,18 @@ def main():
     ext_p = subparsers.add_parser("extract", help="(Re)extract structured facts from a crawled college")
     ext_p.add_argument("college_id", type=int, help="College ID from 'list'")
 
+    # Placement report (PDF table of placed students) -> recruiter facts
+    pl_p = subparsers.add_parser("import-placements",
+                                 help="Add placement facts from a placement report or NIRF PDF (student names are not stored)")
+    pl_p.add_argument("college_id", type=int, help="College ID from 'list'")
+    pl_p.add_argument("source", help="Report URL or path to the PDF")
+    pl_p.add_argument("--keep-existing", action="store_true",
+                      help="Keep the recruiters found by fact extraction instead of replacing them")
+
+    # Re-split saved pages after a change to the chunking rules
+    rc_p = subparsers.add_parser("rechunk", help="Re-split saved pages into search snippets (no crawl, no AI tokens)")
+    rc_p.add_argument("college_id", type=int, nargs="?", help="College ID from 'list' (default: all colleges)")
+
     # List
     subparsers.add_parser("list", help="List all indexed colleges")
 
@@ -240,6 +294,10 @@ def main():
         cmd_extract(args)
     elif args.command == "import":
         cmd_import(args)
+    elif args.command == "import-placements":
+        cmd_import_placements(args)
+    elif args.command == "rechunk":
+        cmd_rechunk(args)
     elif args.command == "list":
         cmd_list(args)
     elif args.command == "delete":

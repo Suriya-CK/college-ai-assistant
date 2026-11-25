@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Suriya C K (github.com/Suriya-CK). All rights reserved.
 # Part of College AI Voice Assistant. Unauthorized copying or reuse is prohibited. See LICENSE.
 import os
+import json
 import uuid
 import asyncio
 import logging
@@ -87,6 +88,7 @@ class SettingsUpdateRequest(BaseModel):
     openai_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     openrouter_api_key: Optional[str] = None
+    cerebras_api_key: Optional[str] = None
     openrouter_model: Optional[str] = None
     default_provider: Optional[str] = None
 
@@ -293,6 +295,31 @@ async def chat(req: ChatRequest):
     answer["audio_url"] = audio_url
     return answer
 
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """Server-sent events: {"type": "delta", "text": ...} while the answer is written, then {"type": "done", ...}
+    with the finished answer. No audio here: the page asks /api/voice/tts afterwards, so text is never held up."""
+    college = db.get_college(req.college_id)
+    if not college:
+        raise HTTPException(status_code=404, detail="College not found")
+
+    conv_id = req.conversation_id or str(uuid.uuid4())
+    db.create_conversation(conv_id, req.college_id, title=f"Q&A on {college.get('name')}")
+
+    def events():
+        try:
+            for event in rag_engine.answer_question_stream(
+                college_id=req.college_id, query=req.query, conversation_id=conv_id, language=req.language
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"Streaming answer failed: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'done', 'result': {'error': 'Failed to generate an answer.'}})}\n\n"
+
+    # A plain generator runs in a worker thread, so a slow answer never blocks other requests
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
 @app.get("/api/conversations/{conv_id}/messages")
 async def get_conversation_history(conv_id: str):
     return db.get_messages(conv_id)
@@ -322,6 +349,40 @@ async def text_to_speech(req: TTSRequest):
     if not audio_url:
         raise HTTPException(status_code=500, detail="Failed to synthesize speech")
     return {"audio_url": audio_url}
+
+# Voice clips waiting to be streamed: id -> (text, voice, lang). Filled by /api/voice/tts/start,
+# read by the <audio> element's GET; small and short-lived, so a plain bounded dict is enough.
+pending_speech: Dict[str, tuple] = {}
+MAX_PENDING_SPEECH = 100
+
+@app.post("/api/voice/tts/start")
+async def start_speech(req: TTSRequest):
+    """Returns an audio URL at once. A cached clip is served as a file; otherwise the URL streams the voice
+    while it is generated, so it starts playing in about a second."""
+    voice, lang = req.voice or "en-IN-NeerjaNeural", req.lang or "en"
+    if not voice_service.clean_text_for_speech(req.text):
+        raise HTTPException(status_code=400, detail="Nothing to read aloud")
+    name = voice_service.cache_name(req.text, voice)
+    if (Config.AUDIO_CACHE_DIR / name).exists():
+        return {"audio_url": f"/api/voice/audio/{name}"}
+    clip_id = name[:-4]
+    if len(pending_speech) >= MAX_PENDING_SPEECH:
+        pending_speech.pop(next(iter(pending_speech)))
+    pending_speech[clip_id] = (req.text, voice, lang)
+    return {"audio_url": f"/api/voice/stream/{clip_id}"}
+
+@app.get("/api/voice/stream/{clip_id}")
+async def stream_speech(clip_id: str):
+    job = pending_speech.get(clip_id)
+    if not job:
+        # Already generated (and cached) by an earlier request for the same clip
+        cached = Config.AUDIO_CACHE_DIR / f"{clip_id}.mp3"
+        if cached.exists():
+            return FileResponse(path=cached, media_type="audio/mpeg")
+        raise HTTPException(status_code=404, detail="Unknown voice clip")
+    text, voice, lang = job
+    return StreamingResponse(voice_service.stream_speech(text, voice, lang), media_type="audio/mpeg",
+                             headers={"Cache-Control": "no-store"})
 
 @app.get("/api/voice/audio/{filename}")
 async def get_cached_audio(filename: str):
@@ -362,16 +423,19 @@ async def get_settings():
         "has_openai_key": bool(Config.OPENAI_API_KEY),
         "has_groq_key": bool(Config.GROQ_API_KEY),
         "has_openrouter_key": bool(Config.OPENROUTER_API_KEY),
+        "has_cerebras_key": bool(Config.CEREBRAS_API_KEY),
         "gemini_masked_key": _mask(Config.GEMINI_API_KEY),
         "openai_masked_key": _mask(Config.OPENAI_API_KEY, "sk-"),
         "groq_masked_key": _mask(Config.GROQ_API_KEY, "gsk_"),
         "openrouter_masked_key": _mask(Config.OPENROUTER_API_KEY, "sk-or-"),
+        "cerebras_masked_key": _mask(Config.CEREBRAS_API_KEY, "csk-"),
         "default_provider": Config.DEFAULT_LLM_PROVIDER,
         "active_provider": rag_engine._get_active_provider(),
         "gemini_model": Config.GEMINI_MODEL,
         "openai_model": Config.OPENAI_MODEL,
         "groq_model": Config.GROQ_MODEL,
         "openrouter_model": Config.OPENROUTER_MODEL,
+        "cerebras_model": Config.CEREBRAS_MODEL,
         "default_max_pages": Config.DEFAULT_MAX_PAGES,
         "default_max_depth": Config.DEFAULT_MAX_DEPTH,
     }
@@ -416,6 +480,7 @@ async def update_settings(req: SettingsUpdateRequest):
         "groq_api_key": "GROQ_API_KEY",
         "openrouter_api_key": "OPENROUTER_API_KEY",
         "openrouter_model": "OPENROUTER_MODEL",
+        "cerebras_api_key": "CEREBRAS_API_KEY",
     }
     for field, env_name in fields.items():
         value = getattr(req, field)
@@ -425,7 +490,7 @@ async def update_settings(req: SettingsUpdateRequest):
             updates[env_name] = value
     if req.default_provider:
         provider = req.default_provider.strip().lower()
-        if provider not in ("gemini", "groq", "openai", "openrouter"):
+        if provider not in ("gemini", "groq", "openai", "openrouter", "cerebras"):
             raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
         Config.DEFAULT_LLM_PROVIDER = provider
         updates["DEFAULT_LLM_PROVIDER"] = provider

@@ -9,7 +9,7 @@ import asyncio
 import hashlib
 import logging
 from collections import Counter
-from urllib.parse import urljoin, urlparse, urldefrag, urlencode, parse_qsl
+from urllib.parse import urljoin, urlparse, urldefrag, urlencode, parse_qsl, unquote
 from typing import List, Dict, Set, Callable, Optional, Any, Tuple
 
 import requests
@@ -21,6 +21,7 @@ os.environ.setdefault("CRAWL4AI_NO_CLOUD_NOTICE", "1")
 
 from app.config import Config
 from app.storage import Database
+from app.placement_report import analyse_document, save_document
 
 logger = logging.getLogger(__name__)
 # pypdf logs a warning for every slightly malformed PDF it still reads fine
@@ -44,7 +45,7 @@ TOPIC_WEIGHTS: Dict[str, int] = {
     # general
     "about": 6, "overview": 5, "history": 4, "facilities": 5, "infrastructure": 4,
     "hostel": 5, "campus": 3, "library": 2, "contact": 4, "accreditation": 5,
-    "naac": 5, "nba": 5, "nirf": 5, "ranking": 4, "research": 2, "alumni": 2,
+    "naac": 5, "nba": 5, "nirf": 12, "statistics": 8, "ranking": 4, "research": 2, "alumni": 2,
 }
 
 # Pages that are almost never useful for answering college questions
@@ -84,9 +85,10 @@ _STRIP_PARAMS = {
 
 _INDEX_PAGE_RE = re.compile(r"/(index|default|home)\.(php|html?|aspx?|jsp)$", re.I)
 _NOT_FOUND_TITLE_RE = re.compile(r"\b(404|not found|page not found|error)\b", re.I)
-# Firewall / CAPTCHA / "are you human" pages served instead of the real content
+# Firewall / CAPTCHA / "are you human" pages served instead of the real content.
+# A bare "captcha" is not enough: ordinary pages mention it for the reCAPTCHA on their enquiry forms.
 _CHALLENGE_RE = re.compile(
-    r"(captcha|validation request|user validation required|verify (that )?you are (a )?human|are you a robot|"
+    r"((complete|solve|enter|fill in) the captcha|captcha (verification|challenge|required)|validation request|user validation required|verify (that )?you are (a )?human|are you a robot|"
     r"just a moment\.\.\.|attention required|checking your browser|ddos protection|access denied|request blocked|"
     r"type the (text|characters) you see)", re.I
 )
@@ -113,6 +115,13 @@ MIN_PAGE_WORDS = 30          # thinner pages are not stored or counted (their li
 BOILERPLATE_MIN_PAGES = 3    # a line repeated on this many earlier pages is site chrome (menus, footers)
 MAX_PDF_BYTES = 15 * 1024 * 1024
 MAX_PDF_PAGES = 40
+MAX_DOCUMENT_PDF_PAGES = 200
+# A re-crawl replaces a college's data only if it got at least this share of the old page count (and this many)
+RECRAWL_KEEP_RATIO = 0.5
+MIN_RECRAWL_PAGES = 5   # read this far to recognise a placement list / NIRF data (Anna University's: 61 pages)
+# Chunking: short sibling sections (lists of people, dates, contacts) are grouped under their parent heading
+SHORT_SECTION_WORDS = 40
+MAX_GROUPED_SECTION_WORDS = 350
 
 
 class CollegeCrawler:
@@ -253,25 +262,46 @@ class CollegeCrawler:
 
     @staticmethod
     def markdown_to_sections(markdown: str) -> List[Dict[str, str]]:
-        """Split markdown into {heading, text} sections at heading lines."""
-        sections: List[Dict[str, str]] = []
-        heading = "Overview"
-        buf: List[str] = []
+        """Split markdown into {heading, text} sections at heading lines.
 
-        def flush():
-            text = "\n".join(buf).strip()
-            if len(text) > 20:
-                sections.append({"heading": heading, "text": text})
-
+        Runs of short sibling sections (a list of people, each under their own small heading) are kept
+        together as ONE section under their parent heading and its intro line. Otherwise every entry of
+        "Principal's Legacy" became a snippet of its own ("Dr. X — 2019-2020") with nothing saying it was a
+        former principal, and entries shorter than 20 characters were dropped."""
+        raw: List[Tuple[int, str, str]] = []          # (heading level, heading, text); level 0 = before any heading
+        level, heading, buf = 0, "Overview", []
         for line in markdown.splitlines():
-            m = re.match(r"^\s{0,3}#{1,6}\s+(.*)", line)
+            m = re.match(r"^\s{0,3}(#{1,6})\s+(.*)", line)
             if m:
-                flush()
-                buf = []
-                heading = m.group(1).strip(" #*")[:200] or heading
+                raw.append((level, heading, "\n".join(buf).strip()))
+                level, heading, buf = len(m.group(1)), (m.group(2).strip(" #*")[:200] or heading), []
             else:
                 buf.append(line)
-        flush()
+        raw.append((level, heading, "\n".join(buf).strip()))
+
+        def short(text: str) -> bool:
+            return len(text.split()) < SHORT_SECTION_WORDS
+
+        sections: List[Dict[str, str]] = []
+        i = 0
+        while i < len(raw):
+            lvl, head, text = raw[i]
+            run, words, j = [], 0, i
+            while (j < len(raw) and raw[j][0] == lvl and lvl > 0 and short(raw[j][2])
+                   and words < MAX_GROUPED_SECTION_WORDS):
+                run.append(raw[j])
+                words += len(raw[j][1].split()) + len(raw[j][2].split())
+                j += 1
+            if len(run) >= 3:
+                parent = next((r for r in reversed(raw[:i]) if r[0] < lvl), None)
+                lines = [parent[2]] if parent and parent[2] and short(parent[2]) else []
+                lines += [f"{h}: {t}" if t else h for _, h, t in run]
+                sections.append({"heading": parent[1] if parent else run[0][1], "text": "\n".join(lines)})
+                i = j
+                continue
+            if len(text) > 20:
+                sections.append({"heading": head, "text": text})
+            i += 1
         return sections
 
     def create_chunks(
@@ -384,7 +414,9 @@ class CollegeCrawler:
         return found
 
     def fetch_pdf(self, url: str) -> Tuple[Optional[str], str]:
-        """Download a PDF and return (text, title). Text is None if it isn't a readable PDF."""
+        """Download a PDF and return (text, title). Text is None if it isn't a readable PDF.
+        Reads up to MAX_DOCUMENT_PDF_PAGES pages, so a long placement list is read whole; ordinary documents
+        are cut to MAX_PDF_PAGES when they are stored."""
         try:
             from pypdf import PdfReader
         except ImportError:
@@ -402,25 +434,26 @@ class CollegeCrawler:
                 data += block
                 if len(data) > MAX_PDF_BYTES:
                     return None, ""
-            return self.pdf_text(data, urlparse(url).path.rsplit("/", 1)[-1])
+            return self.pdf_text(data, urlparse(url).path.rsplit("/", 1)[-1], max_pages=MAX_DOCUMENT_PDF_PAGES)
         except Exception as exc:
             logger.debug(f"PDF fetch failed for {url}: {exc}")
             return None, ""
 
     @staticmethod
-    def pdf_text(data: bytes, fallback_title: str = "") -> Tuple[Optional[str], str]:
-        """(text, title) of a PDF's bytes; text is None if it isn't a readable PDF (e.g. a scanned image)."""
+    def pdf_text(data: bytes, fallback_title: str = "", max_pages: int = MAX_PDF_PAGES) -> Tuple[Optional[str], str]:
+        """(text, title) of a PDF's bytes; text is None if it isn't a readable PDF (e.g. a scanned image).
+        Pages are separated by a form feed, so the text can be cut back to whole pages later."""
         from pypdf import PdfReader
         if not data.startswith(b"%PDF"):
             return None, ""
         reader = PdfReader(io.BytesIO(data))
-        pages = [(p.extract_text() or "") for p in reader.pages[:MAX_PDF_PAGES]]
+        pages = [(p.extract_text() or "") for p in reader.pages[:max_pages]]
         title = ""
         try:
             title = (reader.metadata.title or "") if reader.metadata else ""
         except Exception:
             pass
-        text = "\n\n".join(pages).strip()
+        text = "\n\f\n".join(pages).strip()   # \f between pages (it is whitespace to everything else)
         return (text or None), (title.strip() or fallback_title)
 
     # ------------------------------------------------------------------
@@ -465,11 +498,32 @@ class CollegeCrawler:
         emit("status", {"message": f"Starting crawl for {start_url}..."
                                    + (" (quick test mode)" if Config.QUICK_TEST else ""), "domain": start_host})
         college = self.db.create_or_get_college(start_url, start_host)
-        college_id = college["id"]
+        real_id = college["id"]
         college_name = college.get("name") or start_host
-        # A re-crawl replaces the old content instead of piling duplicate chunks on top of it
-        self.db.clear_college_content(college_id)
-        self.db.update_college_status(college_id, "crawling")
+        old_pages = len(self.db.get_pages_with_text(real_id))
+        if old_pages:
+            # A re-crawl writes into a hidden staging copy: the current data keeps answering questions, and is
+            # only replaced if the new crawl clearly worked (a blocked or down site must not wipe the college)
+            college_id = self.db.create_staging_college(college)
+            emit("status", {"message": f"Re-crawling: the current {old_pages} pages stay in use until the new "
+                                       "crawl has finished successfully."})
+        else:
+            college_id = real_id
+            self.db.clear_college_content(real_id)
+        self.db.update_college_status(real_id, "crawling")
+
+        def finish_staging() -> str:
+            """Swap a successful re-crawl in, or throw it away. Returns why it was thrown away ("" if kept)."""
+            if college_id == real_id:
+                return ""
+            needed = max(MIN_RECRAWL_PAGES, int(min(old_pages, max_pages) * RECRAWL_KEEP_RATIO))
+            if scraped_pages < needed:
+                self.db.delete_college(college_id)
+                return (f"The re-crawl only got {scraped_pages} pages (at least {needed} were expected), so the site "
+                        f"may be down or blocking the crawler. The previous data ({old_pages} pages) was kept; "
+                        "try again later.")
+            self.db.replace_college_content(real_id, college_id)
+            return ""
 
         max_pdfs = max(5, max_pages // 5)
         max_external = max(3, max_pages // 10)
@@ -479,6 +533,17 @@ class CollegeCrawler:
         slowed_down = False
         retried: Set[str] = set()
         stopped_reason = ""
+        documents: List[Tuple[str, Dict[str, Any]]] = []   # placement lists / NIRF data found in PDFs
+
+        def save_documents():
+            """Save the facts of placement documents read during the crawl. With several years of placement
+            lists, the newest year's recruiters win (facts already stored are not overwritten)."""
+            for url, doc in sorted(documents, key=lambda d: (d[1]["kind"] != "nirf", d[1]["year"]), reverse=True):
+                try:
+                    save_document(self.db, college_id, url, doc, self, save_page=False)
+                except Exception as exc:
+                    logger.warning(f"Could not save placement facts from {url}: {exc}")
+            documents.clear()
 
         # Frontier: (-score, seq, url, depth, is_external)
         heap: List[Tuple[int, int, str, int, bool]] = []
@@ -556,7 +621,11 @@ class CollegeCrawler:
             cache_mode=CacheMode.BYPASS,
             wait_until="domcontentloaded",
             page_timeout=Config.PAGE_TIMEOUT_MS,
-            delay_before_return_html=1.0,      # let JS menus mount
+            # Scroll to the bottom first: animated "count-up" numbers (highest package, offers made...) only
+            # start when scrolled into view and read 0 before that, and lazy sections only load then
+            scan_full_page=Config.CRAWL_SCROLL,
+            scroll_delay=0.3,
+            delay_before_return_html=Config.CRAWL_SETTLE_SECONDS,   # let JS menus mount and counters finish
             # remove_overlay_elements is deliberately off: it deletes menus pinned to the top of the
             # screen (e.g. ceg.annauniv.edu), taking every navigation link with them
             remove_consent_popups=True,
@@ -614,7 +683,7 @@ class CollegeCrawler:
                 if in_scope:
                     emit("status", {"message": f"Found {len(in_scope)} URLs in the sitemap."})
                 emit("status", {"message": f"Crawling up to {max_pages} pages (depth {max_depth})...",
-                                "college_id": college_id, "url": home_url})
+                                "college_id": real_id, "url": home_url})
 
                 # ── Best-first crawl in parallel batches ──────────────────────
                 while heap and scraped_pages < max_pages:
@@ -653,10 +722,19 @@ class CollegeCrawler:
                     for (url, depth, _), (text, title) in zip(pdf_items, pdf_results):
                         if scraped_pages >= max_pages:
                             break
-                        if text:
-                            store(url, f"{title} (PDF)", self.clean_markdown(text), depth)
-                        else:
+                        if not text:
                             emit("page_error", {"url": url, "error": "Unreadable or scanned PDF"})
+                            continue
+                        # A placement list or NIRF data: read it exactly (no AI tokens) and store only the
+                        # summary, never the raw list of student names and register numbers
+                        doc = analyse_document(text, unquote(urlparse(url).path.rsplit("/", 1)[-1]))
+                        if doc:
+                            documents.append((url, doc))
+                            store(url, doc["page_title"], doc["page_text"], depth)
+                            emit("status", {"message": f"Read placement data from {doc['page_title']}"})
+                            continue
+                        first_pages = "\f".join(text.split("\f")[:MAX_PDF_PAGES])
+                        store(url, f"{title} (PDF)", self.clean_markdown(first_pages), depth)
 
                     for url, depth, is_external in html_items:
                         if scraped_pages >= max_pages:
@@ -714,6 +792,15 @@ class CollegeCrawler:
                         logger.warning(stopped_reason)
                         break
 
+            save_documents()
+            kept_reason = finish_staging()
+            if kept_reason:
+                logger.warning(kept_reason)
+                self.db.update_college_status(real_id, "completed")
+                emit("error", {"error": kept_reason})
+                return {"success": False, "error": kept_reason, "college_id": real_id, "kept_previous": True}
+            college_id = real_id
+
             # ── Structured fact extraction ──────────────────────────────────
             self.db.update_college_counts(college_id)
             facts_found = 0
@@ -743,10 +830,16 @@ class CollegeCrawler:
 
         except Exception as exc:
             logger.error(f"Crawl aborted: {exc}", exc_info=True)
-            self.db.update_college_counts(college_id)
-            self.db.update_college_status(college_id, "failed" if not scraped_pages else "completed", college_name)
+            save_documents()
+            kept_reason = finish_staging()
+            if kept_reason:
+                self.db.update_college_status(real_id, "completed")
+                emit("error", {"error": f"{exc}. {kept_reason}"})
+                return {"success": False, "error": f"{exc}. {kept_reason}", "college_id": real_id, "kept_previous": True}
+            self.db.update_college_counts(real_id)
+            self.db.update_college_status(real_id, "failed" if not scraped_pages else "completed", college_name)
             emit("error", {"error": str(exc)})
-            return {"success": False, "error": str(exc), "college_id": college_id}
+            return {"success": False, "error": str(exc), "college_id": real_id}
 
     @staticmethod
     def is_blocked(result: Any) -> bool:

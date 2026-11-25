@@ -18,7 +18,8 @@ CATEGORIES: Dict[str, str] = {
     "pg_program": "Postgraduate programmes with specialisation (M.E., M.Tech, MBA, MCA, M.Sc, M.Com...)",
     "doctoral_program": "PhD / doctoral / research programmes",
     "department": "Academic departments, schools or centres",
-    "recruiter": "Companies that recruit or hire students / visited the campus for placements",
+    "recruiter": "Companies that recruit or hire the college's students / visited the campus for placements "
+                 "(NOT the college's own staff vacancies or job adverts)",
     "placement_stat": "Placement statistics: percentage placed, highest/average/median package, number of offers (with year)",
     "fee": "Fee amounts (tuition, hostel, exam, admission) with programme and year",
     "scholarship": "Scholarships offered to students",
@@ -65,6 +66,18 @@ _RETRY_AFTER_RE = re.compile(
     r"(?:try again in|retry in|retry after|retrydelay[\"':\s]*)\s*((?:\d+h)?(?:\d+m(?!s))?(?:[\d.]+(?:ms|s))?)", re.I
 )
 _DAILY_LIMIT_RE = re.compile(r"(per day|tokens per day|requests per day|\btpd\b|\brpd\b|daily)", re.I)
+
+
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def is_zero_stat(category: str, details: str) -> bool:
+    """A placement figure whose every number is 0 ("0 LPA", "₹ 0 Cr", "0 %", "0 +") is an animated counter
+    read before it ran, not a real value: a college never advertises a 0 LPA highest package."""
+    if category != "placement_stat":
+        return False
+    numbers = _NUMBER_RE.findall(details or "")
+    return bool(numbers) and all(float(n.replace(",", "")) == 0 for n in numbers)
 
 
 class QuotaExhausted(RuntimeError):
@@ -125,11 +138,17 @@ class FactExtractor:
             "- One fact per item: every programme, department, company, fee line etc. separately. Do not skip items in long lists.\n"
             '- "name" is the canonical item, e.g. "B.E. Computer Science and Engineering", "Infosys", "Highest package 2024", "NAAC".\n'
             "- Ignore navigation menus, news, events and anything about other institutions.\n"
+            '- "recruiter" is only an outside company that hires the college\'s students. Job vacancies at the college '
+            "itself (faculty, staff, project posts, \"Recruitment of ...\" notices) are never recruiters: skip them.\n"
             "- Programmes are degrees only (B.E., M.Tech, MBA, PhD...). Skip short training courses, workshops, FDPs and certificate events.\n"
             '- Record each programme with its branch ("B.E. Civil Engineering"), never a bare degree like "B.E." or "B.Tech.".\n'
             "- A programme name is the degree and branch only: leave out admission quotas (Aided, Self-supporting, Accredited), "
             "regulation years and document versions. Syllabus or regulation documents are not programmes.\n"
             '- Skip bare document/report links that state no actual value (e.g. "NIRF 2024 Report" with no rank).\n'
+            "- Amounts in Indian digit grouping: 1,00,000 = 1 lakh, 1,00,00,000 = 1 crore. A package of "
+            '"32,16,000" is 32.16 LPA and "1,17,00,000" is 1.17 crore (117 LPA). Convert carefully.\n'
+            "- Never include names of individual students (or their register numbers) in any field: "
+            'write "2 students", not who they are.\n'
             '- If the page has no such facts, return {"facts": []}.\n\n'
             f"PAGE: {title}\nURL: {url}\n---\n{text}\n---"
         )
@@ -139,6 +158,9 @@ class FactExtractor:
         """Parse the LLM's JSON, tolerating code fences and stray text around it."""
         if not raw:
             return []
+        # Reasoning models (e.g. Qwen) may put their thinking in <think>...</think> before the JSON;
+        # braces in it would break the parse
+        raw = re.sub(r"<think>.*?(</think>|$)", "", raw, flags=re.S | re.I)
         start, end = raw.find("{"), raw.rfind("}")
         if start < 0 or end <= start:
             return []
@@ -154,7 +176,7 @@ class FactExtractor:
             category = str(item.get("category", "")).strip().lower()
             name = re.sub(r"\s+", " ", str(item.get("name", ""))).strip(" -•*")
             details = re.sub(r"\s+", " ", str(item.get("details") or "")).strip()
-            if category in CATEGORIES and 2 <= len(name) <= 150:
+            if category in CATEGORIES and 2 <= len(name) <= 150 and not is_zero_stat(category, details):
                 facts.append({"category": category, "name": name, "details": details[:300]})
         return facts
 

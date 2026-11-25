@@ -4,6 +4,7 @@ import sqlite3
 import json
 import logging
 import re
+import uuid
 import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -290,7 +291,7 @@ class Database:
     def list_colleges(self) -> List[Dict[str, Any]]:
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM colleges ORDER BY updated_at DESC")
+            cursor.execute("SELECT * FROM colleges WHERE status != 'staging' ORDER BY updated_at DESC")
             return [dict(row) for row in cursor.fetchall()]
 
     def delete_college(self, college_id: int):
@@ -300,6 +301,44 @@ class Database:
             cursor.execute("DELETE FROM chunks_fts WHERE college_id = ?", (college_id,))
             cursor.execute("DELETE FROM colleges WHERE id = ?", (college_id,))
             conn.commit()
+
+    # ----------------------------------------------------
+    # Safe re-crawls: crawl into a hidden staging copy, swap it in only if the crawl worked
+    # ----------------------------------------------------
+    STAGING_MARK = "#recrawl-"
+
+    def create_staging_college(self, college: Dict[str, Any]) -> int:
+        """A hidden college row a re-crawl writes into, so the college's current data stays untouched (and
+        keeps answering questions) until the new crawl has clearly succeeded."""
+        self.delete_staging_colleges(college["url"])          # leftovers from an interrupted re-crawl
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO colleges (url, domain, name, status, created_at, updated_at)
+                   VALUES (?, ?, ?, 'staging', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
+                (f"{college['url']}{self.STAGING_MARK}{uuid.uuid4().hex[:8]}", college["domain"], college["name"])
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def delete_staging_colleges(self, url: str):
+        with self.get_connection() as conn:
+            ids = [r[0] for r in conn.execute("SELECT id FROM colleges WHERE status = 'staging' AND url LIKE ?",
+                                              (f"{url}{self.STAGING_MARK}%",)).fetchall()]
+        for cid in ids:
+            self.delete_college(cid)
+
+    def replace_college_content(self, college_id: int, staging_id: int):
+        """Move a finished re-crawl's pages, chunks and facts from the staging row onto the college, replacing
+        the old ones, in one transaction (questions see either the old or the new data, never half of each)."""
+        with self.get_connection() as conn:
+            for table in ("chunks_fts", "chunks", "pages", "facts"):
+                conn.execute(f"DELETE FROM {table} WHERE college_id = ?", (college_id,))
+            for table in ("pages", "chunks", "facts"):
+                conn.execute(f"UPDATE {table} SET college_id = ? WHERE college_id = ?", (college_id, staging_id))
+            conn.execute("UPDATE chunks_fts SET college_id = ? WHERE college_id = ?", (college_id, staging_id))
+            conn.execute("DELETE FROM colleges WHERE id = ?", (staging_id,))
+            conn.commit()
+        self.update_college_counts(college_id)
 
     def clear_college_content(self, college_id: int):
         """Remove a college's pages, chunks and facts (before a re-crawl), keeping the college and its chats."""
@@ -362,6 +401,17 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("SELECT category, COUNT(*) FROM facts WHERE college_id = ? GROUP BY category", (college_id,))
             return {row[0]: row[1] for row in cursor.fetchall()}
+
+    def delete_facts(self, college_id: int, category: str, source_url: Optional[str] = None) -> int:
+        """Remove a college's facts of one category (only those from source_url, if given). Returns how many."""
+        with self.get_connection() as conn:
+            if source_url:
+                cur = conn.execute("DELETE FROM facts WHERE college_id = ? AND category = ? AND source_url = ?",
+                                   (college_id, category, source_url))
+            else:
+                cur = conn.execute("DELETE FROM facts WHERE college_id = ? AND category = ?", (college_id, category))
+            conn.commit()
+            return cur.rowcount
 
     def delete_chunks_for_page(self, page_id: int):
         """Remove a page's chunks before re-saving it, so re-importing a page doesn't duplicate them."""

@@ -111,6 +111,20 @@ class TestCrawler(unittest.TestCase):
         self.assertEqual([s["heading"] for s in sections], ["Welcome to Test University", "Tuition and Fees"])
         self.assertIn("$45,000", sections[1]["text"])
 
+    def test_list_of_short_sections_stays_together(self):
+        md = ("### Faculties\nPrincipal's Legacy\n"
+              "#### Dr. A. KUMAR, Ph.D.\nNov 2024 - Till date\n"
+              "#### Dr. B. RAO, Ph.D.\nJan 2022 - Oct 2024\n"
+              "#### Dr. C. DEVI, Ph.D.\nSep 2008 - Aug 2010\n"
+              "## Admissions\nApplications for B.E. programmes open in May every year through TNEA counselling.\n")
+        sections = self.crawler.markdown_to_sections(md)
+        legacy = next(s for s in sections if "KUMAR" in s["text"])
+        self.assertEqual(legacy["heading"], "Faculties")
+        self.assertIn("Principal's Legacy", legacy["text"])
+        self.assertIn("Dr. A. KUMAR, Ph.D.: Nov 2024 - Till date", legacy["text"])
+        self.assertIn("Dr. C. DEVI, Ph.D.: Sep 2008 - Aug 2010", legacy["text"])   # short entries are kept
+        self.assertEqual(sections[-1]["heading"], "Admissions")
+
     def test_boilerplate_lines_removed_after_repeats(self):
         counts = Counter()
         menu = "Home\nAbout Us\nContact"
