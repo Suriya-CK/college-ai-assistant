@@ -21,11 +21,20 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip().strip("\"'")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip().strip("\"'")
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip().strip("\"'")
+    CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "").strip().strip("\"'")
     DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "gemini")
     GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")   # chat answers: small and fast
+    # Fact extraction after a crawl uses a separate model, so it has its own per-minute limit and chat stays fast
+    GROQ_EXTRACT_MODEL = os.getenv("GROQ_EXTRACT_MODEL", "openai/gpt-oss-120b")
+    # gpt-oss models think before answering; "low" keeps chat replies quick
+    GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low")
+    # Cerebras (very fast inference). Model names have no "openai/" prefix there: gpt-oss-120b, qwen-3.8-27b
+    CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
+    CEREBRAS_EXTRACT_MODEL = os.getenv("CEREBRAS_EXTRACT_MODEL", "gpt-oss-120b")
+    CEREBRAS_REASONING_EFFORT = os.getenv("CEREBRAS_REASONING_EFFORT", "low")
     # OpenRouter: ":free" models cost nothing (they have a daily request limit instead)
     OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
     # Free models share one pool with every OpenRouter user and are often busy; these are tried in turn after OPENROUTER_MODEL
@@ -42,6 +51,9 @@ class Config:
     CRAWL_CONCURRENCY = int(os.getenv("CRAWL_CONCURRENCY", "2"))   # browser pages rendered in parallel
     CRAWL_DELAY = float(os.getenv("CRAWL_DELAY", "1.0"))           # seconds between batches; many college sites rate-limit bursts
     PAGE_TIMEOUT_MS = int(os.getenv("PAGE_TIMEOUT_MS", "30000"))
+    # Scroll each page before reading it, so animated counters and lazy-loaded sections show their real content
+    CRAWL_SCROLL = os.getenv("CRAWL_SCROLL", "1") == "1"
+    CRAWL_SETTLE_SECONDS = float(os.getenv("CRAWL_SETTLE_SECONDS", "2.5"))   # wait after scrolling before reading
     # Structured fact extraction (courses, recruiters, fees...) after a crawl: one LLM call per relevant page
     EXTRACT_FACTS = os.getenv("EXTRACT_FACTS", "1") == "1"
     EXTRACT_MAX_PAGES = int(os.getenv("EXTRACT_MAX_PAGES", "40"))

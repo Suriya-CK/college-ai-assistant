@@ -116,7 +116,7 @@ async function checkAISettings() {
         const text = document.getElementById("aiStatusText");
         const banner = document.getElementById("aiKeyNoticeBanner");
 
-        const names = { groq: "Groq", openai: "OpenAI", gemini: "Gemini", openrouter: "OpenRouter" };
+        const names = { groq: "Groq", openai: "OpenAI", gemini: "Gemini", openrouter: "OpenRouter", cerebras: "Cerebras" };
         const activeHasKey = data.active_provider && data.active_provider !== "fallback";
         if (activeHasKey) {
             dot.className = "w-2 h-2 rounded-full bg-emerald-400";
@@ -351,6 +351,9 @@ function setupModals() {
             if (data.openrouter_masked_key) {
                 document.getElementById("openrouterKeyInput").placeholder = `${data.openrouter_masked_key} (saved)`;
             }
+            if (data.cerebras_masked_key) {
+                document.getElementById("cerebrasKeyInput").placeholder = `${data.cerebras_masked_key} (saved)`;
+            }
             document.getElementById("openrouterModelInput").value = data.openrouter_model || "";
             document.getElementById("providerSelect").value = data.default_provider || "gemini";
             document.getElementById("settingsStatus").classList.add("hidden");
@@ -380,6 +383,7 @@ function setupModals() {
             openai_api_key: "openaiKeyInput",
             groq_api_key: "groqKeyInput",
             openrouter_api_key: "openrouterKeyInput",
+            cerebras_api_key: "cerebrasKeyInput",
         };
         const payload = { default_provider: document.getElementById("providerSelect").value };
         for (const [field, inputId] of Object.entries(keyFields)) {
@@ -415,6 +419,7 @@ function setupModals() {
             const fresh = await (await fetch("/api/settings")).json();
             if (fresh.groq_masked_key) document.getElementById("groqKeyInput").placeholder = `${fresh.groq_masked_key} (saved)`;
             if (fresh.openrouter_masked_key) document.getElementById("openrouterKeyInput").placeholder = `${fresh.openrouter_masked_key} (saved)`;
+            if (fresh.cerebras_masked_key) document.getElementById("cerebrasKeyInput").placeholder = `${fresh.cerebras_masked_key} (saved)`;
             if (fresh.gemini_masked_key) document.getElementById("geminiKeyInput").placeholder = `${fresh.gemini_masked_key} (saved)`;
             if (fresh.openai_masked_key) document.getElementById("openaiKeyInput").placeholder = `${fresh.openai_masked_key} (saved)`;
             if (data.check.ok) setTimeout(() => settingsModal.classList.add("hidden"), 2500);
@@ -726,24 +731,30 @@ async function submitQuestion(query, detectedLanguage = null) {
         const autoMode = isAutoLanguage();
         const currentLang = detectedLanguage || currentLanguage();
 
-        const resp = await fetch("/api/chat", {
+        const preferredVoice = autoMode ? null : voiceController.preferredVoice;
+        const resp = await fetch("/api/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 college_id: activeCollegeId,
                 query: query,
                 conversation_id: activeConversationId,
-                voice: autoMode ? null : voiceController.preferredVoice,
-                language: currentLang,
-                generate_audio: true
+                language: currentLang
             })
         });
+        if (!resp.ok || !resp.body) throw new Error(`server returned ${resp.status}`);
 
-        const data = await resp.json();
+        // Show the answer as it is written instead of waiting for all of it
+        const data = await readAnswerStream(resp, (partial) => {
+            const bubble = loadingDiv.lastElementChild;
+            bubble.className = "bg-slate-800/80 border border-slate-700/60 rounded-2xl rounded-tl-sm p-3 sm:p-4 text-slate-200 shadow-md flex-1 min-w-0";
+            bubble.innerHTML = `<div class="prose-chat">${marked.parse(visibleAnswerText(partial))}</div>`;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
         loadingDiv.remove();
 
-        if (data.error) {
-            appendAssistantMessage("⚠️ " + data.error);
+        if (!data || data.error) {
+            appendAssistantMessage("⚠️ " + ((data && data.error) || "No answer received."));
             return;
         }
 
@@ -754,11 +765,19 @@ async function submitQuestion(query, detectedLanguage = null) {
 
         // Render Assistant Response with citations and voice controls
         const languageNote = autoMode && data.language_name ? `Answered in ${data.language_name} (detected automatically)` : "";
-        appendAssistantMessage(data.content, data.spoken_text, data.citations, data.audio_url, data.speech_locale, languageNote);
+        const msgDiv = appendAssistantMessage(data.content, data.spoken_text, data.citations, null, data.speech_locale, languageNote);
 
-        // Voice output with regional speech locale
-        if (voiceController.autoSpeak && (data.audio_url || data.spoken_text)) {
-            voiceController.speak(data.spoken_text, data.audio_url, data.speech_locale);
+        // Never read a Tamil answer with an English voice: the voice must match the answer's language
+        let voice = preferredVoice || data.default_voice;
+        if (voice && voice.split("-")[0] !== data.language) voice = data.default_voice;
+        msgDiv.dataset.voice = voice || "";
+        msgDiv.dataset.lang = data.language || "en";
+
+        // Voice is fetched after the text is on screen, so it never delays the answer
+        if (voiceController.autoSpeak && data.spoken_text) {
+            const audioUrl = await fetchNeuralAudio(data.spoken_text, voice, data.language);
+            if (audioUrl) msgDiv.dataset.audioUrl = audioUrl;
+            voiceController.speak(data.spoken_text, audioUrl, data.speech_locale);
         }
 
     } catch (err) {
@@ -767,6 +786,72 @@ async function submitQuestion(query, detectedLanguage = null) {
     } finally {
         sendBtn.disabled = false;
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+}
+
+// Reads the server-sent events from /api/chat/stream. Calls onText with the answer so far after each piece,
+// and returns the finished answer from the final "done" event.
+async function readAnswerStream(resp, onText) {
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", text = "", result = null;
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop();
+        for (const raw of events) {
+            const line = raw.trim();
+            if (!line.startsWith("data:")) continue;
+            let event;
+            try { event = JSON.parse(line.slice(5)); } catch (e) { continue; }
+            if (event.type === "delta") {
+                text += event.text;
+                onText(text);
+            } else if (event.type === "done") {
+                result = event.result;
+            }
+        }
+    }
+    return result;
+}
+
+// While streaming, hide the [SPOKEN_SUMMARY] block (it is for voice only, possibly half-written) and 【SOURCE】 markers
+function visibleAnswerText(text) {
+    const marker = "[SPOKEN_SUMMARY]";
+    // Models also write it as **SPOKEN_SUMMARY** or "## Spoken summary"
+    const found = text.search(/(\*\*\s*)?(\[|\*\*|#+\s*)\s*SPOKEN[_ ]SUMMARY/i);   // also "**[SPOKEN_SUMMARY]**"
+    if (found !== -1) {
+        text = text.slice(0, found);
+    } else {
+        // A marker may be arriving letter by letter: drop a trailing "[SPOK..."
+        for (let n = marker.length - 1; n > 0; n--) {
+            if (text.endsWith(marker.slice(0, n))) { text = text.slice(0, -n); break; }
+        }
+    }
+    return text.replace(/[ \t]*【[^】]{0,60}】?/g, "");
+}
+
+// Neural voice for an answer. The server answers at once with a URL that streams the voice while it is
+// generated (plays within about a second), so the same voice is used every time instead of the browser's
+// own voice whenever generation was slow. Only if the server can't be reached does the browser voice read it.
+async function fetchNeuralAudio(text, voice, lang) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+        const resp = await fetch("/api/voice/tts/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, voice, lang }),
+            signal: controller.signal
+        });
+        if (!resp.ok) return null;
+        return (await resp.json()).audio_url || null;
+    } catch (e) {
+        return null;
+    } finally {
+        clearTimeout(timer);
     }
 }
 
@@ -839,13 +924,22 @@ function appendAssistantMessage(content, spokenText, citations = [], audioUrl = 
 
     // Bind speak button
     const speakBtn = div.querySelector(".speak-btn");
-    speakBtn.addEventListener("click", () => {
-        window.voiceController.speak(spokenText || content, audioUrl, speechLocale);
+    speakBtn.addEventListener("click", async () => {
+        // The neural audio may arrive after the message is drawn (see submitQuestion); if it never was
+        // requested (auto-speak off), ask for it now so "Listen" uses the same voice as auto-speak
+        const text = spokenText || content;
+        let url = div.dataset.audioUrl || audioUrl;
+        if (!url && div.dataset.voice) {
+            url = await fetchNeuralAudio(text, div.dataset.voice, div.dataset.lang || "en");
+            if (url) div.dataset.audioUrl = url;
+        }
+        window.voiceController.speak(text, url, speechLocale, true);
     });
 
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
     lucide.createIcons();
+    return div;
 }
 
 function escapeHtml(text) {

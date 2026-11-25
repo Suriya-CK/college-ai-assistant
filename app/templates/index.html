@@ -340,6 +340,12 @@
                 </div>
 
                 <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Cerebras API Key</label>
+                    <input type="password" id="cerebrasKeyInput" placeholder="csk-..." autocomplete="off" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono" />
+                    <p class="text-[11px] text-slate-500 mt-0.5">Very fast answers with gpt-oss-120b (paid per use; new accounts get free credits). Get a key at cloud.cerebras.ai.</p>
+                </div>
+
+                <div>
                     <label class="block text-xs font-medium text-slate-300 mb-1">OpenRouter API Key</label>
                     <input type="password" id="openrouterKeyInput" placeholder="sk-or-..." autocomplete="off" class="w-full bg-slate-900 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono" />
                     <label class="block text-[11px] font-medium text-slate-400 mt-2 mb-1">OpenRouter model</label>
@@ -359,6 +365,7 @@
                         <option value="gemini">Google Gemini</option>
                         <option value="groq">Groq</option>
                         <option value="openai">OpenAI</option>
+                        <option value="cerebras">Cerebras (fastest)</option>
                         <option value="openrouter">OpenRouter (free models)</option>
                     </select>
                 </div>

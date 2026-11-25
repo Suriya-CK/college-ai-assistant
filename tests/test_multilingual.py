@@ -34,15 +34,15 @@ class TestMultilingual(unittest.TestCase):
 
     def test_regional_keyword_mapping(self):
         # Tamil admissions
-        ta_terms = get_english_search_terms("சேர்க்கை மற்றும் விண்ணப்பிக்கும் முறை", "ta")
+        ta_terms = get_english_search_terms("சேர்க்கை மற்றும் விண்ணப்பிக்கும் முறை", "ta").lower()   # online translation capitalises
         self.assertTrue(any(w in ta_terms for w in ["admission", "apply", "eligibility"]))
 
         # Tamil courses
-        ta_courses = get_english_search_terms("இங்கு என்ன படிப்புகள் உள்ளன?", "ta")
+        ta_courses = get_english_search_terms("இங்கு என்ன படிப்புகள் உள்ளன?", "ta").lower()
         self.assertTrue(any(w in ta_courses for w in ["courses", "programs", "degrees"]))
 
         # Hindi fees
-        hi_fees = get_english_search_terms("यहाँ फीस और शुल्क कितना है?", "hi")
+        hi_fees = get_english_search_terms("यहाँ फीस और शुल्क कितना है?", "hi").lower()
         self.assertTrue(any(w in hi_fees for w in ["tuition", "fees", "cost"]))
 
         # Hindi contact
